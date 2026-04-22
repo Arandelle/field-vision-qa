@@ -30,14 +30,20 @@ export async function POST(req: NextRequest) {
   const imageBytes = await image.arrayBuffer();
   const base64Image = Buffer.from(imageBytes).toString("base64");
 
-  const ai_instruction = `You are a precise visual analysis assistant for field operations. Analyze the image and answer the user's question with actionable and factual information.
-Rules:
-- Base your answer strictly on what is visible in the image.
-- Be concise and direct.
-- Prefer exact values (e.g., counts, labels, text) when possible.
-- If uncertain or not visible, respond: "I cannot determine that from the image."
-- Do not guess or infer beyond the image.
-`;
+  const ai_instruction = `Analyze the image and answer the question using only visible evidence. Be concise. If unsure, say you cannot determine it`;
+  const payload = {
+    contents: [
+      {
+        parts: [
+          { inline_data: { mime_type: image.type, data: base64Image } },
+          { text: ai_instruction },
+          { text: question },
+        ],
+      },
+    ],
+  };
+
+  console.log(JSON.stringify(payload.contents[0].parts));
 
   try {
     const response = await fetch(
@@ -48,16 +54,7 @@ Rules:
           "Content-Type": "application/json",
           "X-goog-api-key": apiKey,
         },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { inline_data: { mime_type: image.type, data: base64Image } },
-                { text: question },
-              ],
-            },
-          ],
-        }),
+        body: JSON.stringify(payload),
       },
     );
 
