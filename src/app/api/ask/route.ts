@@ -1,4 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
+
+async function compressImage(
+  buffer: Buffer,
+  mimeType: string,
+): Promise<{ data: Buffer; mimeType: string }> {
+  const compressed = await sharp(buffer)
+    .resize(1024, 1024, {
+      fit: "inside", // to preserve aspect ratio
+      withoutEnlargement: true,
+    })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+
+  return { data: compressed, mimeType: "image/jpeg" };
+}
 
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
@@ -28,22 +44,34 @@ export async function POST(req: NextRequest) {
   }
 
   const imageBytes = await image.arrayBuffer();
-  const base64Image = Buffer.from(imageBytes).toString("base64");
+  const rawBuffer = Buffer.from(imageBytes);
+
+  // Log original size
+  const originalSizeKB = (rawBuffer.byteLength / 1024).toFixed(1);
+
+  const { data: compressedBuffer, mimeType: compressedMimeType } =
+    await compressImage(rawBuffer, image.type);
+
+  const base64Image = compressedBuffer.toString("base64");
+
+  // Log compressed size
+  const compressedSizeKB = (compressedBuffer.byteLength / 1024).toFixed(1);
+  console.log(
+    `[image] original: ${originalSizeKB} KB → compressed: ${compressedSizeKB} KB`,
+  );
 
   const ai_instruction = `Analyze the image and answer the question using only visible evidence. Be concise. If unsure, say you cannot determine it`;
   const payload = {
     contents: [
       {
         parts: [
-          { inline_data: { mime_type: image.type, data: base64Image } },
+          { inline_data: { mime_type: compressedMimeType, data: base64Image } },
           { text: ai_instruction },
           { text: question },
         ],
       },
     ],
   };
-
-  console.log(JSON.stringify(payload.contents[0].parts));
 
   try {
     const response = await fetch(
