@@ -55,3 +55,8 @@
   knew what the request and response actually looked like
 - After the FormData bug, traced through the fix line by line before accepting
   it, understood why it worked.
+
+
+## Day 3 (total of 3 hrs and 21 minutes)
+
+### S

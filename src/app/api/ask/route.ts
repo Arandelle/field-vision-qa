@@ -3,7 +3,6 @@ import sharp from "sharp";
 
 async function compressImage(
   buffer: Buffer,
-  mimeType: string,
 ): Promise<{ data: Buffer; mimeType: string }> {
   const compressed = await sharp(buffer)
     .resize(1024, 1024, {
@@ -50,7 +49,7 @@ export async function POST(req: NextRequest) {
   const originalSizeKB = (rawBuffer.byteLength / 1024).toFixed(1);
 
   const { data: compressedBuffer, mimeType: compressedMimeType } =
-    await compressImage(rawBuffer, image.type);
+    await compressImage(rawBuffer);
 
   const base64Image = compressedBuffer.toString("base64");
 
