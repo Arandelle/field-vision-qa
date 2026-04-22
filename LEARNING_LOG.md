@@ -57,6 +57,39 @@
   it, understood why it worked.
 
 
-## Day 3 (total of 3 hrs and 21 minutes)
+## Day 3
+**Hours:** 2 h 28m
 
-### S
+### What I worked on
+Added image compression using sharp before sending to Gemini,
+improved the AI instruction prompt, and cleaned up error handling
+with try/catch.
+
+### What I got stuck on
+I added sharp compression expecting it to reduce Gemini token usage.
+Checked the logs and both before and after showed identical image
+tokens, 1,089. Spent time reading the Gemini media resolution docs
+and learned that the default resolution is "high" which uses up to 1,120 tokens
+per image. So compression doesn't reduce token count — the real
+benefit is transfer latency and payload size.
+
+Also hit a 503 from Gemini mid-testing — "high demand, try again later".
+Not a code problem, just preview model capacity limits during peak hours.
+Waited and retried.
+
+### What I used Claude for
+- Suggested using sharp for server-side compression
+- Explained the resize fit options (inside vs cover vs contain)
+- Helped me understand why 85% JPEG quality is the standard sweet spot
+
+### How I validated it
+Logged original and compressed size on every request, 
+Then compared the Gemini response logs before and after compression
+to check actual token usage.
+
+### Decisions and trade-offs
+- Always convert to JPEG at 85%
+- Kept mediaResolution at default (high, 1089 tokens) for now.
+  Could drop to medium (560 tokens) to cut token cost but would
+  hurt accuracy for serial number reading and fine detail tasks.
+- Trimmed the AI instruction to a direct command.
