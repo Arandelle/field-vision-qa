@@ -15,6 +15,12 @@ async function compressImage(
   return { data: compressed, mimeType: "image/jpeg" };
 }
 
+export interface StepPart {
+  type: "thought" | "code" | "result" | "image" | "answer";
+  content: string;
+  mimeType?: string;
+}
+
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const image = formData.get("image") as File | null;
@@ -70,6 +76,7 @@ export async function POST(req: NextRequest) {
         ],
       },
     ],
+    tools: [{ codeExecution: {} }],
   };
 
   try {
@@ -97,9 +104,46 @@ export async function POST(req: NextRequest) {
 
     console.log(JSON.stringify(data, null, 2));
 
-    const answer =
-      data.candidates?.[0]?.content?.parts?.[0]?.text ?? "No answer returned.";
-    return NextResponse.json({ answer });
+    const parts = data?.candidates[0]?.content?.parts ?? [];
+
+    const steps: StepPart[] = [];
+
+    for (const part of parts) {
+      if (part.text) {
+        // Heuristic:  short text after code is likely the final answer
+        const isAfterCode = steps.some((s) => s.type === "code");
+        steps.push({
+          type: isAfterCode ? "answer" : "thought",
+          content: part.text.trim(),
+        });
+      } else if (part.executableCode) {
+        steps.push({
+          type: "code",
+          content: part.executableCode.code,
+        });
+      } else if (part.codeExecutionResult) {
+        steps.push({
+          type: "result",
+          content: part.codeExecutionResult.output ?? "",
+        });
+      } else if (part.inlineData) {
+        // Intermediate or annotated image produced by the code
+        steps.push({
+          type: "image",
+          content: part.inlineData.data, // raw base64
+          mimeType: part.inlineData.mimeType,
+        });
+      }
+    }
+
+    // Fallback: if nothing parsed, return raw text
+    if (steps.length === 0) {
+      steps.push({ type: "answer", content: "No answer returned." });
+    }
+
+    console.log({steps})
+
+    return NextResponse.json({ steps });
   } catch (error) {
     return NextResponse.json(
       {
