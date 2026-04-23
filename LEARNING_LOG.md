@@ -93,3 +93,32 @@ to check actual token usage.
   Could drop to medium (560 tokens) to cut token cost but would
   hurt accuracy for serial number reading and fine detail tasks.
 - Trimmed the AI instruction to a direct command.
+
+## Day 4
+**Hours:** 1h 22 m
+
+### What I worked on
+- Added tools: [{ codeExecution: {} }] to the payload and built a parser that maps the mixed parts[] array into a typed steps[] timeline (thought, code, result, image, answer)
+
+### What I got stuck on 
+- The response didn't show any code execution, only a direct text answer, tried improving prompt but still didn't work. 
+- Had to study the Gemini code execution response shape to understand where the expected output should come from.
+
+### How I got unstuck
+- I realized I had switched the model to gemini-2.5-flash to save tokens during testing. After reverting to gemini-3-flash-preview, it started working
+- Then inspected the logged response data to verify the structure.
+
+### I used Claude AI to:
+- Understand the full response shape before writing the parser (executableCode, codeExecutionResult, inlineData, outcome)
+- Explaining what tools: [{codeExecution: {}}] actually does and why {} is intentional
+- What response I should return to the client
+- How to shape it
+
+### I validated the AI answers by:
+- Logged the raw API response, and compared actual field names against what the parser expected
+
+### Decisions made and trade-offs accepted
+- Kept sharp compression, it still sufficient for cropping and annotation tasks.
+
+### Do differently with more time
+- Would add outcome handling on codeExecutionResult, so failed execution shows as an error step in the UI instead of an empty result block
