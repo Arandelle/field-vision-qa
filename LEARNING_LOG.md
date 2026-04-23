@@ -95,7 +95,7 @@ to check actual token usage.
 - Trimmed the AI instruction to a direct command.
 
 ## Day 4
-**Hours:** 1h 22 m
+**Hours:** 1h 55 m
 
 ### What I worked on
 - Added tools: [{ codeExecution: {} }] to the payload and built a parser that maps the mixed parts[] array into a typed steps[] timeline (thought, code, result, image, answer)
