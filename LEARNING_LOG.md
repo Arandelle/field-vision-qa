@@ -113,9 +113,14 @@ to check actual token usage.
 - Explaining what tools: [{codeExecution: {}}] actually does and why {} is intentional
 - What response I should return to the client
 - How to shape it
+- Regenerate the UI for Think - Act - Obeserve steps
 
 ### I validated the AI answers by:
 - Logged the raw API response, and compared actual field names against what the parser expected
+- check what step_meta does 
+- checked that the image type correctly prepends data:${mimetype};base64 since the backend returns raw base64 without the URI prefix
+- Verified the form still sends FormData the same way as before — image and question fields unchanged
+- Confirmed data.steps is what the updated page reads, matching what the backend now returns instead of data.answer
 
 ### Decisions made and trade-offs accepted
 - Kept sharp compression, it still sufficient for cropping and annotation tasks.
