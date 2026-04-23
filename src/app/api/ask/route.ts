@@ -65,7 +65,14 @@ export async function POST(req: NextRequest) {
     `[image] original: ${originalSizeKB} KB → compressed: ${compressedSizeKB} KB`,
   );
 
-  const ai_instruction = `Analyze the image and answer the question using only visible evidence. Be concise. If unsure, say you cannot determine it`;
+  const ai_instruction = `You are a precise visual analysis assistant for field operations.
+You MUST use the code execution tool to analyze this image. Do not answer directly.
+Write and execute Python code to:
+1. Load and inspect the image
+2. Crop or zoom into relevant regions
+3. Annotate what you find with bounding boxes
+4. Print your findings`;
+
   const payload = {
     contents: [
       {
@@ -110,11 +117,12 @@ export async function POST(req: NextRequest) {
 
     for (const part of parts) {
       if (part.text) {
-        // Heuristic:  short text after code is likely the final answer
-        const isAfterCode = steps.some((s) => s.type === "code");
+        const trimmed = part.text.trim();
+        if(!trimmed) continue
+
         steps.push({
-          type: isAfterCode ? "answer" : "thought",
-          content: part.text.trim(),
+          type: part.thoughtSignature ? "thought" : "answer",
+          content: trimmed,
         });
       } else if (part.executableCode) {
         steps.push({
