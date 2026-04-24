@@ -109,7 +109,15 @@ Write and execute Python code to:
 
     const data = await response.json();
 
-    console.log(JSON.stringify(data, null, 2));
+    const sanitized = JSON.parse(JSON.stringify(data)); // deep clone
+    for (const part of sanitized?.candidates?.[0]?.content?.parts ?? []) {
+      if (part.inlineData?.data) {
+        part.inlineData.data =
+          part.inlineData.data.slice(0, 40) + "...[truncated]";
+      }
+    }
+
+    console.log(JSON.stringify(sanitized, null, 2));
 
     const parts = data?.candidates[0]?.content?.parts ?? [];
 
@@ -118,12 +126,15 @@ Write and execute Python code to:
     for (const part of parts) {
       if (part.text) {
         const trimmed = part.text.trim();
-        if(!trimmed) continue
+        if (!trimmed) continue;
+
+        const isAfterCode = steps.some((s) => s.type === "code")
 
         steps.push({
-          type: part.thoughtSignature ? "thought" : "answer",
+          type: isAfterCode ? "answer" : "thought",
           content: trimmed,
         });
+        
       } else if (part.executableCode) {
         steps.push({
           type: "code",
@@ -148,8 +159,6 @@ Write and execute Python code to:
     if (steps.length === 0) {
       steps.push({ type: "answer", content: "No answer returned." });
     }
-
-    console.log({steps})
 
     return NextResponse.json({ steps });
   } catch (error) {
