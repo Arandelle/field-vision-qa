@@ -95,7 +95,7 @@ to check actual token usage.
 - Trimmed the AI instruction to a direct command.
 
 ## Day 4
-**Hours:** 1h 55 m
+**Hours:** 2h 29 m
 
 ### What I worked on
 - Added tools: [{ codeExecution: {} }] to the payload and built a parser that maps the mixed parts[] array into a typed steps[] timeline (thought, code, result, image, answer)
@@ -135,6 +135,7 @@ to check actual token usage.
 - Read docs on whether agentic vision exposes readable thinking steps before code execution
 - Fixed text part classification, it was incorrectly using `thoughtSignature` to detect thoughts, rewrote to classify by position relative to `executableCode` parts instead
 - Investigated how to handle answer parts that return as JSON or structured text instead of plain readable text
+- Added renderAnswerContent and JsonReadable to handle answer parts that Gemini returns as raw JSON instead of plain text
 
 ### What I got stuck on
 - I spent time trying to analyze a readable Think step. Tried to config thinkingConfig: { thinkingLevel: "high" } but still no readable thought text appeared.
@@ -142,12 +143,15 @@ to check actual token usage.
 
 ### How I got unstuck
 - Asked AI how to render a think step when there is no text before `executableCode`. Learned that `thoughtSignature` is an opaque blob that runs internally inside Google's infrastructure — it is not exposed as readable text through the API.
+- For JSON answers, used `renderAnswerContent` helper that detects JSON and renders it as readable key/value pairs instead of a raw string.
 
 ### I used Claude/ChatGPT AI to:
 - Understand what `thoughtSignature` actually is and why it is not human-readable
+- Write the `renderAnswerContent` and `JsonReadable` components for structured answer rendering
 
 ### I validated the AI answers by:
 - Tested `thinkingConfig` payload myself and confirmed no readable thought parts appeared in the response
+- Traced through the recursion manually, objects and arrays call JsonReadable again, primitives just convert to string
 
 ### Decisions made and trade-offs accepted
 - Switched text classification to use position, text after `executableCode` is the final answer. 
