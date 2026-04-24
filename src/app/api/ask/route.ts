@@ -84,6 +84,13 @@ Write and execute Python code to:
       },
     ],
     tools: [{ codeExecution: {} }],
+
+    generationConfig: {
+      thinkingConfig: {
+        includeThoughts: true,
+        thinkingLevel: "HIGH",
+      },
+    },
   };
 
   try {
@@ -128,13 +135,12 @@ Write and execute Python code to:
         const trimmed = part.text.trim();
         if (!trimmed) continue;
 
-        const isAfterCode = steps.some((s) => s.type === "code")
+        const isAfterCode = steps.some((s) => s.type === "code");
 
         steps.push({
           type: isAfterCode ? "answer" : "thought",
           content: trimmed,
         });
-        
       } else if (part.executableCode) {
         steps.push({
           type: "code",
