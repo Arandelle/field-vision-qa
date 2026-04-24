@@ -127,3 +127,33 @@ to check actual token usage.
 
 ### Do differently with more time
 - Would add outcome handling on codeExecutionResult, so failed execution shows as an error step in the UI instead of an empty result block
+
+## Day 5
+**Hours:** 1h 56m
+
+### What I worked on
+- Read docs on whether agentic vision exposes readable thinking steps before code execution
+- Fixed text part classification, it was incorrectly using `thoughtSignature` to detect thoughts, rewrote to classify by position relative to `executableCode` parts instead
+- Investigated how to handle answer parts that return as JSON or structured text instead of plain readable text
+
+### What I got stuck on
+- I spent time trying to analyze a readable Think step. Tried to config thinkingConfig: { thinkingLevel: "high" } but still no readable thought text appeared.
+- Some answer parts came back as JSON or structured text which rendered as a raw blob in the UI.
+
+### How I got unstuck
+- Asked AI how to render a think step when there is no text before `executableCode`. Learned that `thoughtSignature` is an opaque blob that runs internally inside Google's infrastructure — it is not exposed as readable text through the API.
+
+### I used Claude/ChatGPT AI to:
+- Understand what `thoughtSignature` actually is and why it is not human-readable
+
+### I validated the AI answers by:
+- Tested `thinkingConfig` payload myself and confirmed no readable thought parts appeared in the response
+
+### Decisions made and trade-offs accepted
+- Switched text classification to use position, text after `executableCode` is the final answer. 
+- Accepted that the Think process cannot be rendered.
+
+### Do differently with more time
+- Would investigate further if there is any supported way to expose the thinking process.
+
+
