@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { renderAnswerContent } from "./lib/RenderText";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface StepPart {
@@ -52,8 +53,14 @@ const STEP_META: Record<
 };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-function TimelineStep({ step, index }: { step: StepPart; index: number }) {
-  const [expanded, setExpanded] = useState(true);
+function TimelineStep({
+  step,
+  index,
+}: {
+  step: StepPart;
+  index: number;
+}) {
+  const [expanded, setExpanded] = useState(step.type !== "thought");
   const meta = STEP_META[step.type];
 
   return (
@@ -65,16 +72,20 @@ function TimelineStep({ step, index }: { step: StepPart; index: number }) {
         >
           {meta.icon}
         </div>
-        <div className="w-0.5 bg-gray-200 flex-1 mt-1" />
+       <div className="w-0.5 bg-gray-200 flex-1 mt-1" />
       </div>
 
       {/* Card */}
-      <div className={`flex-1 mb-4 border rounded-lg overflow-hidden ${meta.border}`}>
+      <div
+        className={`flex-1 mb-4 border rounded-lg overflow-hidden ${meta.border}`}
+      >
         <button
           onClick={() => setExpanded((v) => !v)}
           className={`w-full flex items-center justify-between px-4 py-2 ${meta.bg} text-left`}
         >
-          <span className={`text-xs font-semibold uppercase tracking-widest ${meta.color}`}>
+          <span
+            className={`text-xs font-semibold uppercase tracking-widest ${meta.color}`}
+          >
             {meta.label}
           </span>
           <span className="text-gray-400 text-xs">{expanded ? "▲" : "▼"}</span>
@@ -99,6 +110,9 @@ function TimelineStep({ step, index }: { step: StepPart; index: number }) {
               <pre className="text-xs bg-gray-100 text-gray-700 rounded p-3 overflow-x-auto whitespace-pre-wrap">
                 {step.content || "(no output)"}
               </pre>
+            ) : step.type === "answer" ? (
+              // Answer: detect and render JSON or plain text nicely
+              <div>{renderAnswerContent(step.content)}</div>
             ) : (
               // thought / answer — plain text, preserve newlines
               <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
@@ -136,10 +150,25 @@ export default function Page() {
 
   // Preset prompts matching field operations use cases
   const PRESETS = [
-    { label: "Count items", prompt: "How many items are in this image? Annotate each one." },
-    { label: "Read serial number", prompt: "What is the serial number or text on the nameplate or label? Crop and zoom in to read it clearly." },
-    { label: "Safety check", prompt: "Is the person in this photo wearing required safety equipment (hard hat, vest, gloves)? Highlight each item." },
-    { label: "Count fingers", prompt: "How many fingers are being held up? Draw a bounding box around each finger to count accurately." },
+    {
+      label: "Count items",
+      prompt: "How many items are in this image? Annotate each one.",
+    },
+    {
+      label: "Read serial number",
+      prompt:
+        "What is the serial number or text on the nameplate or label? Crop and zoom in to read it clearly.",
+    },
+    {
+      label: "Safety check",
+      prompt:
+        "Is the person in this photo wearing required safety equipment (hard hat, vest, gloves)? Highlight each item.",
+    },
+    {
+      label: "Count fingers",
+      prompt:
+        "How many fingers are being held up? Draw a bounding box around each finger to count accurately.",
+    },
   ];
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -156,7 +185,8 @@ export default function Page() {
 
     const file = fileRef.current?.files?.[0];
     if (!file) return setError("Please select an image.");
-    if (file.size > 5 * 1024 * 1024) return setError("Image must be under 5 MB.");
+    if (file.size > 5 * 1024 * 1024)
+      return setError("Image must be under 5 MB.");
     if (!question.trim()) return setError("Please enter a question.");
 
     setLoading(true);
@@ -180,21 +210,20 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-gray-50">
       <div className="max-w-2xl mx-auto px-4 py-10">
-
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
             Visual Field Inspector
           </h1>
           <p className="mt-1 text-sm text-gray-500">
-            Upload an image, ask a question. The AI will reason step by step and annotate what it finds.
+            Upload an image, ask a question. The AI will reason step by step and
+            annotate what it finds.
           </p>
         </div>
 
         {/* Form card */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
           <form onSubmit={handleSubmit} className="space-y-4">
-
             {/* File upload */}
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">
@@ -251,9 +280,24 @@ export default function Page() {
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  <svg
+                    className="animate-spin h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v8H4z"
+                    />
                   </svg>
                   Analyzing…
                 </span>
@@ -279,12 +323,15 @@ export default function Page() {
             </h2>
             <div>
               {steps.map((step, i) => (
-                <TimelineStep key={i} step={step} index={i} />
+                <TimelineStep
+                  key={i}
+                  step={step}
+                  index={i}
+                />
               ))}
             </div>
           </div>
         )}
-
       </div>
     </main>
   );
