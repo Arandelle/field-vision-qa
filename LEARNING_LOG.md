@@ -95,7 +95,7 @@ to check actual token usage.
 - Trimmed the AI instruction to a direct command.
 
 ## Day 4
-**Hours:** 2h 29 m
+**Hours:** 1h 55 m
 
 ### What I worked on
 - Added tools: [{ codeExecution: {} }] to the payload and built a parser that maps the mixed parts[] array into a typed steps[] timeline (thought, code, result, image, answer)
@@ -106,7 +106,7 @@ to check actual token usage.
 
 ### How I got unstuck
 - I realized I had switched the model to gemini-2.5-flash to save tokens during testing. After reverting to gemini-3-flash-preview, it started working
-- Then inspected the logged response data to verify the structure.
+- Then inspected the logged response data to verify the structure. 
 
 ### I used Claude AI to:
 - Understand the full response shape before writing the parser (executableCode, codeExecutionResult, inlineData, outcome)
@@ -129,7 +129,7 @@ to check actual token usage.
 - Would add outcome handling on codeExecutionResult, so failed execution shows as an error step in the UI instead of an empty result block
 
 ## Day 5
-**Hours:** 1h 56m
+**Hours:** 3h 42m
 
 ### What I worked on
 - Read docs on whether agentic vision exposes readable thinking steps before code execution
@@ -140,14 +140,18 @@ to check actual token usage.
 ### What I got stuck on
 - I spent time trying to analyze a readable Think step. Tried to config thinkingConfig: { thinkingLevel: "high" } but still no readable thought text appeared.
 - Some answer parts came back as JSON or structured text which rendered as a raw blob in the UI.
+- Fetch failed - Local testing was blocked by network — ETIMEDOUT on generativelanguage.googleapis.com. Confirmed via curl.
+- Tried exposing local dev via Cloudflare tunnel to test from phone but also didn't work since the server still routes through the blocked network.
 
 ### How I got unstuck
 - Asked AI how to render a think step when there is no text before `executableCode`. Learned that `thoughtSignature` is an opaque blob that runs internally inside Google's infrastructure — it is not exposed as readable text through the API.
 - For JSON answers, used `renderAnswerContent` helper that detects JSON and renders it as readable key/value pairs instead of a raw string.
+- Switched network connection
 
 ### I used Claude/ChatGPT AI to:
 - Understand what `thoughtSignature` actually is and why it is not human-readable
 - Write the `renderAnswerContent` and `JsonReadable` components for structured answer rendering
+- Asked how to diagnosed network issue
 
 ### I validated the AI answers by:
 - Tested `thinkingConfig` payload myself and confirmed no readable thought parts appeared in the response
@@ -156,8 +160,9 @@ to check actual token usage.
 ### Decisions made and trade-offs accepted
 - Switched text classification to use position, text after `executableCode` is the final answer. 
 - Accepted that the Think process cannot be rendered.
+- Set `thinkingLevel` to HIGH for more detailed reasoning, trade-off is slower and slightly more expensive responses
 
 ### Do differently with more time
-- Would investigate further if there is any supported way to expose the thinking process.
+- Show on UI the each step rather than on one full response
 
 
