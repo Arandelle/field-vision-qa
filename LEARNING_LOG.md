@@ -165,4 +165,40 @@ to check actual token usage.
 ### Do differently with more time
 - Show on UI the each step rather than on one full response
 
+## Day 6
 
+### What I worked on
+- Added request ID structured logging so each request can be traced from the backend logs to the client response.
+- Started supporting multi-turn follow-up questions by accepting conversation history from the client.
+- Switched image delivery from inline base64 to the Gemini Files API, upload once on file select, reference by URI on every subsequent request.
+- Removed the `compressImage` utility entirely after verifying it was only needed to keep inline payloads small.
+
+### What I got stuck on
+- Multi-turn support was tricky because the first request needs the image, but follow-up questions should reuse the conversation context instead of asking the user to upload again.
+- I got stuck while adding streaming support for the agentic vision timeline. At first, I thought streaming meant the Gemini response itself would arrive step by step, but my current implementation still waits for the full response before parsing and sending each step to the frontend through SSE.
+- I also got stuck on how to properly render a conversation that includes both normal chat turns and agentic timeline steps.
+- I initially assumed re-sending the image as base64 on every turn was acceptable. After questioning whether that was normal, I looked into it and found the Files API exists specifically for this, upload once, get a URI back, reference it across all turns. I verified this by logging `payloadSizeKB` before each Gemini request. Turn 1 dropped from ~300KB to 0.6KB. Turn 2 was 10.7KB — only the history text growing, not the image.
+
+
+### How I got unstuck
+- For the Files API discovery, I questioned my own assumption rather than accepting the first working implementation. The logs gave me a concrete, measurable way to verify the fix was real and not just theoretical, 0.6KB vs 300KB is not a subtle difference, and seeing it in the terminal made the trade-off tangible rather than abstract.
+- For the streaming confusion, I re-read the Gemini docs more carefully and noticed `streamGenerateContent` as a separate endpoint. The key realization was that wrapping `generateContent` in a `ReadableStream` only streams the delivery from my server to the browser, Gemini itself still processes the full request before responding. Switching endpoints fixes the actual bottleneck, not just the transport layer. I have not fully resolved this yet, it is the next thing to fix, but understanding why the current approach falls short is what got me unblocked conceptually.
+- For multi-turn rendering, I realized the flat `steps[]` state model would not work once I needed to preserve previous turns. Switching to a `turns[]` array where each turn holds its own question and steps array let the UI accumulate history without resetting on each submission.
+
+### How I used AI tools
+- AI suggested the Files API approach and the upload endpoint structure. Before accepting it, I added payload size logging to verify the claim that inline base64 was expensive — I wanted a number, not just a theory.
+- Verified that code, result, answer, and generated image parts are parsed into timeline steps.
+- Verified that request IDs appear in backend logs and response headers.
+
+### Trade-offs accepted
+- I kept the app stateless and did not add a database.
+- The follow-up conversation currently depends on client-provided history, so refreshing the page loses context.
+- Files API uploads expire after 48 hours. For this exercise that is fine, but a production version would need to handle re-upload or track expiry.
+- Removed `compressImage` after switching to the Files API. Originally added to keep 
+  inline base64 payloads small, but once the image is uploaded once and referenced by 
+  URI, compression serves no purpose since 5MB limit is still enforced client-side.
+
+### What I would improve with more time
+- Improve the UI timeline so code, result, and annotated images are easier to review.
+- Use `streamGenerateContent` instead of `generateContent` so agentic steps appear as Gemini produces them, not in a burst after the full response completes.
+- Add a re-upload fallback if the Files API URI has expired between sessions.
