@@ -159,12 +159,11 @@ export default function Page() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    setTurns((prev) => [...prev, { question, steps: [] }]);
 
-    const file = history.length === 0 ? imageFile : imageFile; // always need the file
-   if (!fileUri) return setError("Please wait for image to finish uploading.");
-
+    if (!fileUri) return setError("Please wait for image to finish uploading.");
     if (!question.trim()) return setError("Please enter a question.");
+
+    setTurns((prev) => [...prev, { question, steps: [] }]);
 
     const rid = crypto.randomUUID();
     setRequestId(rid);
