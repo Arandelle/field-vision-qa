@@ -167,6 +167,8 @@ to check actual token usage.
 
 ## Day 6
 
+**Hours:** 4h 36m
+
 ### What I worked on
 - Added request ID structured logging so each request can be traced from the backend logs to the client response.
 - Started supporting multi-turn follow-up questions by accepting conversation history from the client.
