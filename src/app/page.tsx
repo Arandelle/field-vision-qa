@@ -4,6 +4,14 @@ import { useState, useRef } from "react";
 import { renderAnswerContent } from "./lib/RenderText";
 import { STEP_META, StepPart } from "./types/steps";
 
+// Replace your current `steps` state with this:
+interface Turn {
+  question: string;
+  steps: StepPart[];
+}
+
+
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 function TimelineStep({
   step,
@@ -24,7 +32,7 @@ function TimelineStep({
         >
           {meta.icon}
         </div>
-       <div className="w-0.5 bg-gray-200 flex-1 mt-1" />
+        <div className="w-0.5 bg-gray-200 flex-1 mt-1" />
       </div>
 
       {/* Card */}
@@ -94,11 +102,15 @@ function ImagePreview({ file }: { file: File }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Page() {
   const [question, setQuestion] = useState("");
-  const [steps, setSteps] = useState<StepPart[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const [history, setHistory] = useState<{ role: string; parts: { text: string }[] }[]>([]);
+  const [imageFile, setImageFile] = useState<File | null>(null); // persist across turns
 
   // Preset prompts matching field operations use cases
   const PRESETS = [
@@ -123,41 +135,107 @@ export default function Page() {
     },
   ];
 
+  // ── Update handleFileChange ───────────────────────────────────────────────────
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
     setPreviewFile(file);
-    setSteps([]);
+    setImageFile(file);
+    setTurns((prev) => [...prev, { question, steps: [] }]);
     setError("");
+    setHistory([]); // reset conversation when new image is uploaded
+    setRequestId(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    setSteps([]);
+    setTurns((prev) => [...prev, { question, steps: [] }]);
 
-    const file = fileRef.current?.files?.[0];
+    const file = history.length === 0 ? imageFile : imageFile; // always need the file
     if (!file) return setError("Please select an image.");
-    if (file.size > 5 * 1024 * 1024)
-      return setError("Image must be under 5 MB.");
+    if (file.size > 5 * 1024 * 1024) return setError("Image must be under 5 MB.");
     if (!question.trim()) return setError("Please enter a question.");
 
+    const rid = crypto.randomUUID();
+    setRequestId(rid);
     setLoading(true);
+
     const form = new FormData();
     form.append("image", file);
     form.append("question", question);
+    form.append("history", JSON.stringify(history)); // send full history
 
     try {
-      const res = await fetch("/api/ask", { method: "POST", body: form });
-      const data = await res.json();
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "x-request-id": rid },
+        body: form,
+      });
 
-      if (!res.ok) return setError(data.error ?? "Something went wrong.");
-      setSteps(data.steps ?? []);
+      if (!res.ok || !res.body) {
+        const data = await res.json();
+        return setError(data.error ?? "Something went wrong.");
+      }
+
+      // ── SSE reader ──────────────────────────────────────────────────────────
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let assistantTurn = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            if (event.type === "meta") {
+              setRequestId(event.requestId); // use server's requestId
+            } else if (event.type === "step") {
+              setTurns((prev) => {
+                if (prev.length === 0) return prev; // guard: no turns yet
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (!last) return prev; // guard: last turn undefined
+                updated[updated.length - 1] = {
+                  ...last,
+                  steps: [...(last.steps ?? []), event.step],
+                };
+                return updated;
+              });
+            } else if (event.type === "done") {
+              assistantTurn = event.assistantTurn;
+            } else if (event.type === "error") {
+              setError(event.message);
+            }
+          } catch {
+            // malformed chunk, skip
+          }
+        }
+      }
+
+      // Append this turn to history for multi-turn
+      if (assistantTurn) {
+        const userTurn = { role: "user", parts: [{ text: question }] };
+        setHistory((prev) => [...prev, userTurn, assistantTurn]);
+      }
+
+      setQuestion(""); // clear input for follow-up
+
     } catch {
       setError("Network error. Please try again.");
     } finally {
       setLoading(false);
     }
   }
+
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -267,21 +345,46 @@ export default function Page() {
           </div>
         )}
 
-        {/* Timeline */}
-        {steps.length > 0 && (
-          <div>
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4">
-              Reasoning Timeline
-            </h2>
-            <div>
-              {steps.map((step, i) => (
-                <TimelineStep
-                  key={i}
-                  step={step}
-                  index={i}
-                />
-              ))}
-            </div>
+        {turns.length > 0 && (
+          <div className="space-y-6">
+            {turns.map((turn, i) => (
+              <div key={i}>
+                {/* User bubble */}
+                <div className="flex justify-end mb-4">
+                  <div className="max-w-[80%] bg-gray-900 text-white px-4 py-2 rounded-2xl rounded-br-sm text-sm">
+                    {turn.question}
+                  </div>
+                </div>
+
+                {/* Gemini reasoning timeline */}
+                {turn.steps.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 ml-1">
+                      Gemini
+                    </p>
+                    {turn.steps.map((step, j) => (
+                      <TimelineStep key={j} step={step} index={j} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Still loading this turn */}
+                {loading && i === turns.length - 1 && turn.steps.length === 0 && (
+                  <div className="flex items-center gap-2 text-sm text-gray-400 ml-1">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    Thinking…
+                  </div>
+                )}
+
+                {/* Divider between turns */}
+                {i < turns.length - 1 && (
+                  <div className="border-t border-gray-100 mt-6" />
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
