@@ -1,4 +1,3 @@
-import { compressImage } from "@/app/lib/compressImage";
 import { NextRequest } from "next/server";
 
 export interface StepPart {
