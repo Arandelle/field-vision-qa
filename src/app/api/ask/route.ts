@@ -1,5 +1,5 @@
 import { compressImage } from "@/app/lib/compressImage";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 export interface StepPart {
   type: "thought" | "code" | "result" | "image" | "answer";
@@ -7,49 +7,58 @@ export interface StepPart {
   mimeType?: string;
 }
 
+// ── Logger ────────────────────────────────────────────────────────────────────
+function makeLogger(requestId: string) {
+  return {
+    info: (msg: string, meta?: object) =>
+      console.log(JSON.stringify({ level: "info", requestId, msg, ...meta, ts: new Date().toISOString() })),
+    error: (msg: string, meta?: object) =>
+      console.error(JSON.stringify({ level: "error", requestId, msg, ...meta, ts: new Date().toISOString() })),
+  };
+}
+
+// ── SSE helpers ───────────────────────────────────────────────────────────────
+function encodeSSE(data: object) {
+  return `data: ${JSON.stringify(data)}\n\n`;
+}
+
 export async function POST(req: NextRequest) {
+  const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+  const log = makeLogger(requestId);
+
+  log.info("request received");
+
   const formData = await req.formData();
   const image = formData.get("image") as File | null;
   const question = formData.get("question") as string | null;
+  const historyRaw = formData.get("history") as string | null;
+  const history: { role: string; parts: { text: string }[] }[] =
+    historyRaw ? JSON.parse(historyRaw) : [];
 
   if (!image || !question) {
-    return Response.json(
-      { error: "Missing image or question" },
-      { status: 400 },
-    );
+    return Response.json({ error: "Missing image or question" }, { status: 400 });
   }
 
   if (image.size > 5 * 1024 * 1024) {
-    return Response.json(
-      { error: "Image must be under 5 MB" },
-      { status: 400 },
-    );
+    return Response.json({ error: "Image must be under 5 MB" }, { status: 400 });
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: "Server misconfiguration" },
-      { status: 500 },
-    );
+    return Response.json({ error: "Server misconfiguration" }, { status: 500 });
   }
 
   const imageBytes = await image.arrayBuffer();
   const rawBuffer = Buffer.from(imageBytes);
-
-  // Log original size
   const originalSizeKB = (rawBuffer.byteLength / 1024).toFixed(1);
 
   const { data: compressedBuffer, mimeType: compressedMimeType } =
     await compressImage(rawBuffer);
 
   const base64Image = compressedBuffer.toString("base64");
-
-  // Log compressed size
   const compressedSizeKB = (compressedBuffer.byteLength / 1024).toFixed(1);
-  console.log(
-    `[image] original: ${originalSizeKB} KB → compressed: ${compressedSizeKB} KB`,
-  );
+
+  log.info("image compressed", { originalSizeKB, compressedSizeKB });
 
   const ai_instruction = `You are a precise visual analysis assistant for field operations.
 You MUST use the code execution tool to analyze this image. Do not answer directly.
@@ -59,18 +68,34 @@ Write and execute Python code to:
 3. Annotate what you find with bounding boxes
 4. Print your findings`;
 
-  const payload = {
-    contents: [
-      {
-        parts: [
-          { inline_data: { mime_type: compressedMimeType, data: base64Image } },
-          { text: ai_instruction },
-          { text: question },
-        ],
-      },
-    ],
-    tools: [{ codeExecution: {} }],
+  // ── Build conversation turns ───────────────────────────────────────────────
+  // First turn always includes the image + instruction
+  // Subsequent turns (history) are plain text
+  const isFirstTurn = history.length === 0;
 
+  const contents = isFirstTurn
+    ? [
+        {
+          role: "user",
+          parts: [
+            { inline_data: { mime_type: compressedMimeType, data: base64Image } },
+            { text: ai_instruction },
+            { text: question },
+          ],
+        },
+      ]
+    : [
+        // Re-attach image only on the first turn stored in history
+        ...history,
+        {
+          role: "user",
+          parts: [{ text: question }],
+        },
+      ];
+
+  const payload = {
+    contents,
+    tools: [{ codeExecution: {} }],
     generationConfig: {
       thinkingConfig: {
         includeThoughts: true,
@@ -79,86 +104,117 @@ Write and execute Python code to:
     },
   };
 
-  try {
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-goog-api-key": apiKey,
-        },
-        body: JSON.stringify(payload),
-      },
-    );
+  log.info("calling gemini", { model: "gemini-3-flash-preview", turns: contents.length });
 
-    if (!response.ok) {
-      const err = await response.json();
-      return NextResponse.json(
-        { error: err.error?.message ?? "Gemini API error" },
-        { status: response.status },
-      );
-    }
+  // ── Streaming response ─────────────────────────────────────────────────────
+  const stream = new ReadableStream({
+    async start(controller) {
+      const enqueue = (data: object) =>
+        controller.enqueue(new TextEncoder().encode(encodeSSE(data)));
 
-    const data = await response.json();
+      // Always send requestId first so client can display it
+      enqueue({ type: "meta", requestId });
 
-    const sanitized = JSON.parse(JSON.stringify(data)); // deep clone
-    for (const part of sanitized?.candidates?.[0]?.content?.parts ?? []) {
-      if (part.inlineData?.data) {
-        part.inlineData.data =
-          part.inlineData.data.slice(0, 40) + "...[truncated]";
+      try {
+        const response = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey,
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+
+        if (!response.ok) {
+          const err = await response.json();
+          log.error("gemini error", { status: response.status });
+          enqueue({ type: "error", message: err.error?.message ?? "Gemini API error" });
+          controller.close();
+          return;
+        }
+
+        const data = await response.json();
+        const parts = data?.candidates?.[0]?.content?.parts ?? [];
+
+        log.info("gemini responded", { partCount: parts.length });
+
+        const steps: StepPart[] = [];
+
+        // Stream each step as it's parsed
+        for (const part of parts) {
+          if (part.text) {
+            const trimmed = part.text.trim();
+            if (!trimmed) continue;
+
+            const isAfterCode = steps.some((s) => s.type === "code");
+            const step: StepPart = {
+              type: isAfterCode ? "answer" : "thought",
+              content: trimmed,
+            };
+            steps.push(step);
+            enqueue({ type: "step", step });
+
+          } else if (part.executableCode) {
+            const step: StepPart = { type: "code", content: part.executableCode.code };
+            steps.push(step);
+            enqueue({ type: "step", step });
+
+          } else if (part.codeExecutionResult) {
+            const step: StepPart = { type: "result", content: part.codeExecutionResult.output ?? "" };
+            steps.push(step);
+            enqueue({ type: "step", step });
+
+          } else if (part.inlineData) {
+            const step: StepPart = {
+              type: "image",
+              content: part.inlineData.data,
+              mimeType: part.inlineData.mimeType,
+            };
+            steps.push(step);
+            enqueue({ type: "step", step });
+          }
+        }
+
+        if (steps.length === 0) {
+          const fallback: StepPart = { type: "answer", content: "No answer returned." };
+          enqueue({ type: "step", step: fallback });
+        }
+
+        // Send the full assistant turn back so client can append to history
+        const assistantText = steps
+          .filter((s) => s.type === "answer")
+          .map((s) => s.content)
+          .join("\n");
+
+        enqueue({
+          type: "done",
+          assistantTurn: {
+            role: "model",
+            parts: [{ text: assistantText }],
+          },
+        });
+
+        log.info("stream complete", { stepCount: steps.length });
+
+      } catch (error) {
+        log.error("unexpected error", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        enqueue({ type: "error", message: "Internal server error" });
       }
-    }
 
-    console.log(JSON.stringify(sanitized, null, 2));
+      controller.close();
+    },
+  });
 
-    const parts = data?.candidates[0]?.content?.parts ?? [];
-
-    const steps: StepPart[] = [];
-
-    for (const part of parts) {
-      if (part.text) {
-        const trimmed = part.text.trim();
-        if (!trimmed) continue;
-
-        const isAfterCode = steps.some((s) => s.type === "code");
-
-        steps.push({
-          type: isAfterCode ? "answer" : "thought",
-          content: trimmed,
-        });
-      } else if (part.executableCode) {
-        steps.push({
-          type: "code",
-          content: part.executableCode.code,
-        });
-      } else if (part.codeExecutionResult) {
-        steps.push({
-          type: "result",
-          content: part.codeExecutionResult.output ?? "",
-        });
-      } else if (part.inlineData) {
-        // Intermediate or annotated image produced by the code
-        steps.push({
-          type: "image",
-          content: part.inlineData.data, // raw base64
-          mimeType: part.inlineData.mimeType,
-        });
-      }
-    }
-
-    // Fallback: if nothing parsed, return raw text
-    if (steps.length === 0) {
-      steps.push({ type: "answer", content: "No answer returned." });
-    }
-
-    return NextResponse.json({ steps });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Internal server error",
-      },
-      { status: 500 },
-    );
-  }
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "x-request-id": requestId,
+    },
+  });
 }
