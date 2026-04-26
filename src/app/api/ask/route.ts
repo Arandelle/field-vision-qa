@@ -29,36 +29,26 @@ export async function POST(req: NextRequest) {
   log.info("request received");
 
   const formData = await req.formData();
-  const image = formData.get("image") as File | null;
+
   const question = formData.get("question") as string | null;
   const historyRaw = formData.get("history") as string | null;
   const history: { role: string; parts: { text: string }[] }[] =
     historyRaw ? JSON.parse(historyRaw) : [];
 
-  if (!image || !question) {
-    return Response.json({ error: "Missing image or question" }, { status: 400 });
-  }
 
-  if (image.size > 5 * 1024 * 1024) {
-    return Response.json({ error: "Image must be under 5 MB" }, { status: 400 });
-  }
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return Response.json({ error: "Server misconfiguration" }, { status: 500 });
   }
 
-  const imageBytes = await image.arrayBuffer();
-  const rawBuffer = Buffer.from(imageBytes);
-  const originalSizeKB = (rawBuffer.byteLength / 1024).toFixed(1);
 
-  const { data: compressedBuffer, mimeType: compressedMimeType } =
-    await compressImage(rawBuffer);
+  const fileUri = formData.get("fileUri") as string | null;
+  const fileMime = formData.get("fileMime") as string | null;
 
-  const base64Image = compressedBuffer.toString("base64");
-  const compressedSizeKB = (compressedBuffer.byteLength / 1024).toFixed(1);
-
-  log.info("image compressed", { originalSizeKB, compressedSizeKB });
+  if (!fileUri || !question) {
+    return Response.json({ error: "Missing image or question" }, { status: 400 });
+  }
 
   const ai_instruction = `You are a precise visual analysis assistant for field operations.
 You MUST use the code execution tool to analyze this image. Do not answer directly.
@@ -75,23 +65,26 @@ Write and execute Python code to:
 
   const contents = isFirstTurn
     ? [
-        {
-          role: "user",
-          parts: [
-            { inline_data: { mime_type: compressedMimeType, data: base64Image } },
-            { text: ai_instruction },
-            { text: question },
-          ],
-        },
-      ]
+      {
+        role: "user",
+        parts: [
+          { file_data: { mime_type: fileMime, file_uri: fileUri } }, // ← changed
+          { text: ai_instruction },
+          { text: question },
+        ],
+      },
+    ]
     : [
-        // Re-attach image only on the first turn stored in history
-        ...history,
-        {
-          role: "user",
-          parts: [{ text: question }],
-        },
-      ];
+      {
+        ...history[0],
+        parts: [
+          { file_data: { mime_type: fileMime, file_uri: fileUri } },
+          ...history[0].parts,
+        ],
+      },
+      ...history.slice(1),
+      { role: "user", parts: [{ text: question }] },
+    ];
 
   const payload = {
     contents,
@@ -103,8 +96,12 @@ Write and execute Python code to:
       },
     },
   };
-
-  log.info("calling gemini", { model: "gemini-3-flash-preview", turns: contents.length });
+  const payloadString = JSON.stringify(payload);
+  const payloadSizeKB = (Buffer.byteLength(payloadString, "utf8") / 1024).toFixed(1);
+  const hasFileData = contents.some((c: any) =>
+    c.parts?.some((p: any) => p.file_data)
+  );
+  log.info("payload size", { payloadSizeKB, turns: contents.length, hasFileData });
 
   // ── Streaming response ─────────────────────────────────────────────────────
   const stream = new ReadableStream({
@@ -117,7 +114,7 @@ Write and execute Python code to:
 
       try {
         const response = await fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent",
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
           {
             method: "POST",
             headers: {
@@ -183,17 +180,20 @@ Write and execute Python code to:
           enqueue({ type: "step", step: fallback });
         }
 
-        // Send the full assistant turn back so client can append to history
-        const assistantText = steps
-          .filter((s) => s.type === "answer")
-          .map((s) => s.content)
-          .join("\n");
+        const assistantParts = parts.map((part: any) => {
+          if (part.inlineData) {
+            // Don't store the full image in history
+            return { text: "[image output]" };
+          }
+          // Keep everything else including thoughtSignature
+          return part;
+        });
 
         enqueue({
           type: "done",
           assistantTurn: {
             role: "model",
-            parts: [{ text: assistantText }],
+            parts: assistantParts,
           },
         });
 
