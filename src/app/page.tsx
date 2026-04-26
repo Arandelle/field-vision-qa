@@ -1,25 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { renderAnswerContent } from "./lib/RenderText";
 import { STEP_META, StepPart } from "./types/steps";
 
-// Replace your current `steps` state with this:
-interface Turn {
-  question: string;
-  steps: StepPart[];
-}
-
-
-
 // ── Sub-components ────────────────────────────────────────────────────────────
-function TimelineStep({
-  step,
-  index,
-}: {
-  step: StepPart;
-  index: number;
-}) {
+function TimelineStep({ step, index }: { step: StepPart; index: number }) {
   const [expanded, setExpanded] = useState(step.type !== "thought");
   const meta = STEP_META[step.type];
 
@@ -99,17 +85,30 @@ function ImagePreview({ file }: { file: File }) {
   );
 }
 
+// Replace your current `steps` state with this:
+interface Turn {
+  question: string;
+  steps: StepPart[];
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Page() {
   const [question, setQuestion] = useState("");
-  const [turns, setTurns] = useState<Turn[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [fileUri, setFileUri] = useState<string | null>(null);
+  const [fileMime, setFileMime] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const [turns, setTurns] = useState<Turn[]>([]);
+
   const [requestId, setRequestId] = useState<string | null>(null);
-  const [history, setHistory] = useState<{ role: string; parts: { text: string }[] }[]>([]);
+  const [history, setHistory] = useState<
+    { role: string; parts: { text: string }[] }[]
+  >([]);
   const [imageFile, setImageFile] = useState<File | null>(null); // persist across turns
 
   // Preset prompts matching field operations use cases
@@ -135,25 +134,36 @@ export default function Page() {
     },
   ];
 
-  // ── Update handleFileChange ───────────────────────────────────────────────────
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
     setPreviewFile(file);
-    setImageFile(file);
-    setTurns((prev) => [...prev, { question, steps: [] }]);
-    setError("");
-    setHistory([]); // reset conversation when new image is uploaded
-    setRequestId(null);
-  }
+    setTurns([]);
+    setHistory([]);
+    setFileUri(null);
+    if (!file) return;
 
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("image", file);
+      const res = await fetch("/api/upload", { method: "POST", body: form });
+      const data = await res.json();
+      setFileUri(data.fileUri);
+      setFileMime(data.mimeType);
+    } catch {
+      setError("Failed to upload image.");
+    } finally {
+      setUploading(false);
+    }
+  }
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setTurns((prev) => [...prev, { question, steps: [] }]);
 
     const file = history.length === 0 ? imageFile : imageFile; // always need the file
-    if (!file) return setError("Please select an image.");
-    if (file.size > 5 * 1024 * 1024) return setError("Image must be under 5 MB.");
+   if (!fileUri) return setError("Please wait for image to finish uploading.");
+
     if (!question.trim()) return setError("Please enter a question.");
 
     const rid = crypto.randomUUID();
@@ -161,9 +171,10 @@ export default function Page() {
     setLoading(true);
 
     const form = new FormData();
-    form.append("image", file);
     form.append("question", question);
     form.append("history", JSON.stringify(history)); // send full history
+    form.append("fileUri", fileUri!);
+    form.append("fileMime", fileMime!);
 
     try {
       const res = await fetch("/api/ask", {
@@ -228,15 +239,12 @@ export default function Page() {
       }
 
       setQuestion(""); // clear input for follow-up
-
     } catch {
       setError("Network error. Please try again.");
     } finally {
       setLoading(false);
     }
   }
-
-
   return (
     <main className="min-h-screen bg-gray-50">
       <div className="max-w-2xl mx-auto px-4 py-10">
@@ -288,6 +296,13 @@ export default function Page() {
               </div>
             </div>
 
+            {history.length > 0 && (
+              <p className="text-xs text-blue-600 font-medium mb-1">
+                ↩ Following up on same image ({history.length / 2} previous turn
+                {history.length / 2 > 1 ? "s" : ""})
+              </p>
+            )}
+
             {/* Question input */}
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">
@@ -338,6 +353,12 @@ export default function Page() {
           </form>
         </div>
 
+        {requestId && (
+          <p className="text-xs text-gray-400 font-mono mb-3">
+            request ID: <span className="text-gray-600">{requestId}</span>
+          </p>
+        )}
+
         {/* Error */}
         {error && (
           <div className="mb-6 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
@@ -345,6 +366,7 @@ export default function Page() {
           </div>
         )}
 
+        {/* Timeline */}
         {turns.length > 0 && (
           <div className="space-y-6">
             {turns.map((turn, i) => (
@@ -369,15 +391,32 @@ export default function Page() {
                 )}
 
                 {/* Still loading this turn */}
-                {loading && i === turns.length - 1 && turn.steps.length === 0 && (
-                  <div className="flex items-center gap-2 text-sm text-gray-400 ml-1">
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                    </svg>
-                    Thinking…
-                  </div>
-                )}
+                {loading &&
+                  i === turns.length - 1 &&
+                  turn.steps.length === 0 && (
+                    <div className="flex items-center gap-2 text-sm text-gray-400 ml-1">
+                      <svg
+                        className="animate-spin h-4 w-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v8H4z"
+                        />
+                      </svg>
+                      Thinking…
+                    </div>
+                  )}
 
                 {/* Divider between turns */}
                 {i < turns.length - 1 && (
